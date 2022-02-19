@@ -1,3 +1,3 @@
-# NodeJS Starter
+# ha-spotify-sonos-card
 
-supposed to be used as a git repo to make Docker add the relevent javascript environment.
+Home Assistant Lovelace card to play Spotify playlists on Sonos devices
