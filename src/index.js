@@ -3,26 +3,6 @@ import {
     html,
     css
 } from "lit";
-import { customElement, property, state } from "lit/decorators";
-import {
-  HomeAssistant,
-  hasConfigOrEntityChanged,
-  hasAction,
-  ActionHandlerEvent,
-  handleAction,
-  LovelaceCardEditor,
-  getLovelace
-} from 'custom-card-helpers';
-
-
-function loadCSS(url) {
-    const link = document.createElement("link");
-    link.type = "text/css";
-    link.rel = "stylesheet";
-    link.href = url;
-    document.head.appendChild(link);
-}
-
 
 class HASpotifySonosCard extends LitElement {
     static get properties() {
@@ -65,6 +45,7 @@ class HASpotifySonosCard extends LitElement {
                 playlists: [],
                 albums:[],
                 artists:[],
+                recent:[],
                 name: this.config.spotify_accounts[i].name
             }
         }
@@ -72,7 +53,8 @@ class HASpotifySonosCard extends LitElement {
         for(var i=0;i<this.config.spotify_accounts.length;i++){
             this.FetchRecords(this.config.spotify_accounts[i].id, "playlists");
             this.FetchRecords(this.config.spotify_accounts[i].id, "albums");
-            this.FetchRecords(this.config.spotify_accounts[i].id, "artists");
+            //this.FetchRecords(this.config.spotify_accounts[i].id, "artists");
+            this.FetchRecords(this.config.spotify_accounts[i].id, "recent");
         }
         this.activeAccount = this.config.spotify_accounts[0].id;
         this.activeTab = "playlists";
@@ -88,6 +70,8 @@ class HASpotifySonosCard extends LitElement {
             t = "current_user_saved_albums"
         }else if(type=="artists"){
             t = "current_user_followed_artists"
+        }else if(type=="recent"){
+            t = "current_user_recently_played"
         }
 
         
@@ -98,17 +82,21 @@ class HASpotifySonosCard extends LitElement {
             media_content_type: t,
             type: "media_player/browse_media"
         }).then(function (response) {
-
-            console.log(response.children);
-
             let ar = [];
             let limit = 24;
             if(that.config.grid_limit){
                 limit = that.config.grid_limit;
             }
             for(var i=0;i<response.children.length;i++){
-                if(i<limit){
-                    ar.push(response.children[i]);
+                if(ar.length<limit){
+                    if(type=="recent"){
+                        //only add if it's not an artist
+                        if(response.children[i].media_content_type!="artist"){
+                            ar.push(response.children[i]);
+                        }
+                    }else{
+                        ar.push(response.children[i]);
+                    }
                 }
             }
             that.accounts[account][type] = ar;
@@ -136,12 +124,18 @@ class HASpotifySonosCard extends LitElement {
         currentGroup.splice(currentGroup.indexOf(this.config.entity_id), 1);
         //properGroup
         let properGroup = [];
-        for(var i=0;i<group.players.length;i++){
-            properGroup.push(group.players[i].entity_id);
+        if(group.players && group.players !== null && group.players.length > 0){
+            for(var i=0;i<group.players.length;i++){
+                properGroup.push(group.players[i].entity_id);
+            }
         }
+        console.log("Join players")
         //join all the needed players
         for(var i=0;i<properGroup.length;i++){
             if(currentGroup.indexOf(properGroup[i])==-1){
+                console.log("adding player to group");
+                console.log("master: "+this.config.entity_id);
+                console.log("player: "+properGroup[i]);
                 this.hass.callService("sonos", "join", {
                     master: this.config.entity_id,
                     entity_id: properGroup[i]
@@ -205,10 +199,14 @@ class HASpotifySonosCard extends LitElement {
 
         //are there the same number of players in the group as currently connected?
         const currentPlayers = this.hass.states[this.config.entity_id].attributes.sonos_group;
-        const groupPlayers = group.players;
+        let groupPlayers = group.players;
         //current players list includes this master player, so remove 1
-        if((currentPlayers.length-1)!=groupPlayers.length){
-            return false
+        if(groupPlayers && groupPlayers!==null && groupPlayers.length>0){
+            if((currentPlayers.length-1)!=groupPlayers.length){
+                return false
+            }
+        }else{
+            groupPlayers = []
         }
         //check that all group players are currently connected
         for(var i=0;i<groupPlayers.length;i++){
@@ -229,7 +227,7 @@ class HASpotifySonosCard extends LitElement {
         return true;
     }
     DisplayGroups(){
-        if(this.config.groups && this.config.groups.length > 0){
+        if(this.config.groups && this.config.groups!==null && this.config.groups.length > 0){
             return html`
             <ul class="grid grid-3">
                 ${this.config.groups.map(group => {
@@ -263,10 +261,20 @@ class HASpotifySonosCard extends LitElement {
         let account = this.accounts[this.activeAccount];
         let list = account[this.activeTab];
         
-        if(list && list.length > 0){
-            return html`
-            <ul class="grid grid-3">
-                ${list.map(playlist => {
+        //if list array is less than 12, fill with empty objects
+        let arLen = this.config.grid_limit;
+        if(list.length < arLen){
+            for(var i=list.length;i<arLen;i++){
+                list.push({
+                    title: false
+                })
+            }
+        }
+
+        return html`
+        <ul class="grid grid-3">
+            ${list.map(playlist => {
+                if(playlist.title){
                     return html`
                     <li>
                         <div class="container">
@@ -282,12 +290,25 @@ class HASpotifySonosCard extends LitElement {
                         </div>
                     </li>
                     `
-                })}
-            </ul>
-            `;
-        }else{
-            return html`<span>Loading...</span>`;
-        }
+                }else{
+                    return html`
+                        <li>
+                            <div class="container">
+                                <div class="inner">
+                                    <div 
+                                        class="playlist-trigger" 
+                                        style=""
+                                    >
+                                        <div class="playlist-name"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </li>
+                    `;
+                }
+            })}
+        </ul>
+        `;
     }
     DisplayLinkedPlayers(mediaPlayerObj){
         if(this.config.show_linked_players && mediaPlayerObj.attributes && mediaPlayerObj.attributes.sonos_group && mediaPlayerObj.attributes.sonos_group.length > 1){
@@ -355,10 +376,13 @@ class HASpotifySonosCard extends LitElement {
 
         let playlistClassName = "";
         let albumClassName = "";
+        let recentClassName = "";
         if(this.activeTab=="playlists"){
             playlistClassName = "active"
         }else if(this.activeTab=="albums"){
             albumClassName = "active"
+        }else if(this.activeTab=="recent"){
+            recentClassName = "active"
         }
 
         return html`
@@ -366,6 +390,7 @@ class HASpotifySonosCard extends LitElement {
             <ul class="tabs">
                 <li class="${playlistClassName}" @click=${(elem) => this.SetListType(elem, "playlists")}>Playlists</li>
                 <li class="${albumClassName}" @click=${(elem) => this.SetListType(elem, "albums")}>Albums</li>
+                <li class="${recentClassName}" @click=${(elem) => this.SetListType(elem, "recent")}>Recent</li>
             </ul>
         `;
     }
@@ -410,12 +435,6 @@ class HASpotifySonosCard extends LitElement {
     // distribute all cards over the available columns.
     getCardSize() {
         return 8 + 1;
-    }
-
-    haService(state) {
-        this.hass.callService("homeassistant", "toggle", {
-            entity_id: state.entity_id
-        });
     }
 
     static get styles() {
@@ -607,6 +626,11 @@ class HASpotifySonosCard extends LitElement {
         }
         ul.tabs.block li:last-child{
             border-right: none;
+        }
+        .loading-list{
+            list-style: none;
+            padding: 0;
+            margin: 20px;
         }
     `;
     }
